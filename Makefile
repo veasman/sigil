@@ -1,6 +1,5 @@
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
-DATADIR ?= $(PREFIX)/share
 
 CC ?= cc
 PKG_CONFIG ?= pkg-config
