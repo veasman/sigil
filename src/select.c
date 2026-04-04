@@ -11,8 +11,7 @@
 
 #define SIGIL_DRAG_THRESHOLD 6
 #define SIGIL_OVERLAY_ALPHA  0x44
-#define SIGIL_BORDER_COLOR   0xFFFFFFFFUL
-#define SIGIL_BORDER_WIDTH   2
+#define SIGIL_SELECT_BORDER  2
 
 static void normalize_rect(int x1, int y1, int x2, int y2, SigilRect *out) {
     int left = (x1 < x2) ? x1 : x2;
@@ -97,7 +96,7 @@ static Window create_overlay(Display *dpy, int screen, int width, int height) {
     attrs.override_redirect = True;
     attrs.colormap = cmap;
     attrs.border_pixel = 0;
-    attrs.background_pixel = ((unsigned long)SIGIL_OVERLAY_ALPHA << 24);
+    attrs.background_pixel = 0;
     attrs.event_mask =
         ExposureMask |
         ButtonPressMask |
@@ -138,9 +137,15 @@ static Window create_overlay(Display *dpy, int screen, int width, int height) {
     return win;
 }
 
-static void draw_overlay_rect(Display *dpy, Window overlay, GC gc,
-                              int x1, int y1, int x2, int y2) {
-    XClearWindow(dpy, overlay);
+static void paint_overlay(Display *dpy, Picture pic,
+                          int screen_w, int screen_h,
+                          int x1, int y1, int x2, int y2) {
+    XRenderColor clear = {0, 0, 0, 0};
+    XRenderColor tint = {0, 0, 0, SIGIL_OVERLAY_ALPHA * 257};
+
+    /* clear entire overlay to transparent */
+    XRenderFillRectangle(dpy, PictOpSrc, pic, &clear,
+                         0, 0, (unsigned int)screen_w, (unsigned int)screen_h);
 
     int left = (x1 < x2) ? x1 : x2;
     int top = (y1 < y2) ? y1 : y2;
@@ -148,21 +153,105 @@ static void draw_overlay_rect(Display *dpy, Window overlay, GC gc,
     unsigned int height = (unsigned int)abs(y2 - y1);
 
     if (width == 0 || height == 0) {
-        XFlush(dpy);
+        /* no selection yet, tint the whole screen */
+        XRenderFillRectangle(dpy, PictOpSrc, pic, &tint,
+                             0, 0, (unsigned int)screen_w, (unsigned int)screen_h);
         return;
     }
 
-    XDrawRectangle(
+    /* top */
+    if (top > 0) {
+        XRenderFillRectangle(dpy, PictOpSrc, pic, &tint,
+                             0, 0, (unsigned int)screen_w, (unsigned int)top);
+    }
+    /* bottom */
+    if ((int)(top + height) < screen_h) {
+        XRenderFillRectangle(dpy, PictOpSrc, pic, &tint,
+                             0, (int)(top + height),
+                             (unsigned int)screen_w,
+                             (unsigned int)(screen_h - top - (int)height));
+    }
+    /* left */
+    if (left > 0) {
+        XRenderFillRectangle(dpy, PictOpSrc, pic, &tint,
+                             0, top, (unsigned int)left, height);
+    }
+    /* right */
+    if ((int)(left + (int)width) < screen_w) {
+        XRenderFillRectangle(dpy, PictOpSrc, pic, &tint,
+                             (int)(left + (int)width), top,
+                             (unsigned int)(screen_w - left - (int)width), height);
+    }
+}
+
+static Window create_select_box(Display *dpy, int screen) {
+    int depth = 0;
+    Visual *visual = find_argb_visual(dpy, screen, &depth);
+    if (!visual || depth != 32) {
+        return None;
+    }
+
+    Window root = RootWindow(dpy, screen);
+    Colormap cmap = XCreateColormap(dpy, root, visual, AllocNone);
+
+    XSetWindowAttributes attrs;
+    memset(&attrs, 0, sizeof(attrs));
+    attrs.override_redirect = True;
+    attrs.colormap = cmap;
+    attrs.border_pixel = 0xFFFFFFFFUL;
+    attrs.background_pixel = 0;
+    attrs.event_mask = 0;
+
+    unsigned long mask =
+        CWOverrideRedirect |
+        CWColormap |
+        CWBorderPixel |
+        CWBackPixel |
+        CWEventMask;
+
+    Window win = XCreateWindow(
         dpy,
-        overlay,
-        gc,
-        left,
-        top,
-        width > 0 ? width - 1 : 0,
-        height > 0 ? height - 1 : 0
+        root,
+        0, 0, 1, 1,
+        SIGIL_SELECT_BORDER,
+        depth,
+        InputOutput,
+        visual,
+        mask,
+        &attrs
     );
 
-    XFlush(dpy);
+    if (win) {
+        XClassHint hint;
+        hint.res_name = (char *)"sigil-select-box";
+        hint.res_class = (char *)"sigil-select-box";
+        XSetClassHint(dpy, win, &hint);
+    }
+
+    return win;
+}
+
+static void update_select_box(Display *dpy, Window box,
+                              int x1, int y1, int x2, int y2, bool *mapped) {
+    int left = (x1 < x2) ? x1 : x2;
+    int top = (y1 < y2) ? y1 : y2;
+    unsigned int width = (unsigned int)abs(x2 - x1);
+    unsigned int height = (unsigned int)abs(y2 - y1);
+
+    if (width == 0 || height == 0) {
+        if (*mapped) {
+            XUnmapWindow(dpy, box);
+            *mapped = false;
+        }
+        return;
+    }
+
+    XMoveResizeWindow(dpy, box, left, top, width, height);
+
+    if (!*mapped) {
+        XMapRaised(dpy, box);
+        *mapped = true;
+    }
 }
 
 static Window resolve_click_target(Display *dpy, Window root, Window target) {
@@ -204,7 +293,7 @@ static void settle_after_overlay(Display *dpy) {
 
     struct timespec ts;
     ts.tv_sec = 0;
-    ts.tv_nsec = 30 * 1000 * 1000;
+    ts.tv_nsec = 150 * 1000 * 1000;
     nanosleep(&ts, NULL);
 
     XSync(dpy, False);
@@ -227,6 +316,18 @@ bool sigil_select(Display *dpy, SigilSelection *out) {
         return false;
     }
 
+    XRenderPictFormat *fmt = XRenderFindVisualFormat(dpy, find_argb_visual(dpy, screen, NULL));
+    XRenderPictureAttributes pa;
+    memset(&pa, 0, sizeof(pa));
+    Picture overlay_pic = XRenderCreatePicture(dpy, overlay, fmt, 0, &pa);
+
+    /* paint initial full-screen tint */
+    paint_overlay(dpy, overlay_pic, screen_w, screen_h, 0, 0, 0, 0);
+    XFlush(dpy);
+
+    Window select_box = create_select_box(dpy, screen);
+    bool box_mapped = false;
+
     Cursor cursor = XCreateFontCursor(dpy, XC_crosshair);
 
     int pgrab = XGrabPointer(
@@ -242,6 +343,9 @@ bool sigil_select(Display *dpy, SigilSelection *out) {
     );
 
     if (pgrab != GrabSuccess) {
+        if (select_box != None) {
+            XDestroyWindow(dpy, select_box);
+        }
         XDestroyWindow(dpy, overlay);
         if (cursor != None) {
             XFreeCursor(dpy, cursor);
@@ -262,14 +366,6 @@ bool sigil_select(Display *dpy, SigilSelection *out) {
         keyboard_grabbed = true;
     }
 
-    XGCValues gcv;
-    memset(&gcv, 0, sizeof(gcv));
-    gcv.foreground = SIGIL_BORDER_COLOR;
-    gcv.line_width = SIGIL_BORDER_WIDTH;
-    gcv.subwindow_mode = IncludeInferiors;
-
-    GC gc = XCreateGC(dpy, overlay, GCForeground | GCLineWidth | GCSubwindowMode, &gcv);
-
     bool pressed = false;
     bool dragging = false;
     bool ok = false;
@@ -286,11 +382,13 @@ bool sigil_select(Display *dpy, SigilSelection *out) {
 
         if (ev.type == Expose) {
             if (dragging) {
-                draw_overlay_rect(dpy, overlay, gc, start_x, start_y, last_x, last_y);
+                paint_overlay(dpy, overlay_pic, screen_w, screen_h,
+                              start_x, start_y, last_x, last_y);
             } else {
-                XClearWindow(dpy, overlay);
-                XFlush(dpy);
+                paint_overlay(dpy, overlay_pic, screen_w, screen_h,
+                              0, 0, 0, 0);
             }
+            XFlush(dpy);
             continue;
         }
 
@@ -339,7 +437,14 @@ bool sigil_select(Display *dpy, SigilSelection *out) {
             last_y = cur_y;
 
             if (dragging) {
-                draw_overlay_rect(dpy, overlay, gc, start_x, start_y, last_x, last_y);
+                paint_overlay(dpy, overlay_pic, screen_w, screen_h,
+                              start_x, start_y, last_x, last_y);
+                if (select_box != None) {
+                    update_select_box(dpy, select_box,
+                                      start_x, start_y, last_x, last_y,
+                                      &box_mapped);
+                }
+                XFlush(dpy);
             }
             continue;
         }
@@ -366,13 +471,17 @@ bool sigil_select(Display *dpy, SigilSelection *out) {
         }
     }
 
-    XFreeGC(dpy, gc);
-
     if (keyboard_grabbed) {
         XUngrabKeyboard(dpy, CurrentTime);
     }
 
     XUngrabPointer(dpy, CurrentTime);
+
+    XRenderFreePicture(dpy, overlay_pic);
+
+    if (select_box != None) {
+        XDestroyWindow(dpy, select_box);
+    }
     XDestroyWindow(dpy, overlay);
 
     if (cursor != None) {
