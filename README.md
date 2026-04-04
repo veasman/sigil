@@ -36,17 +36,27 @@ Supported target for now:
 
 X11 only.
 
-## Build dependencies
+## Install
 
-Install on Arch/Artix:
+### Arch/Artix (makepkg)
+
+```bash
+git clone https://github.com/veasman/sigil.git
+cd sigil
+makepkg -si
+```
+
+This handles all dependencies automatically.
+
+### Manual
+
+Install build dependencies:
 
 ```bash
 doas pacman -S base-devel pkgconf libx11 libxrandr libxrender libpng
 ```
 
-## Runtime dependency
-
-Clipboard support uses `xclip`:
+Install runtime dependency for clipboard support:
 
 ```bash
 doas pacman -S xclip
@@ -54,23 +64,17 @@ doas pacman -S xclip
 
 If `xclip` is missing, `--file` and `--stdout` still work.
 
-## Build
+Build and install:
 
 ```bash
 make
-```
-
-## Install
-
-Local install:
-
-```bash
 ./install.sh
 ```
 
-System install:
+Or for a system-wide install:
 
 ```bash
+make
 PREFIX=/usr/local ./install.sh
 ```
 
@@ -104,6 +108,25 @@ Write PNG to stdout:
 
 ```bash
 sigil full --stdout > /tmp/shot.png
+```
+
+## Compositor notes (picom)
+
+Sigil works well with picom. The selection overlay and selection box are
+separate windows with distinct classes, so you can target them in your picom
+config:
+
+- `sigil-select` — the dark overlay
+- `sigil-select-box` — the selection border (picom's `corner-radius` applies here)
+
+If picom's blur is enabled, exclude both sigil windows to prevent blur from
+appearing in your screenshots:
+
+```conf
+blur-background-exclude = [
+    "class_g = 'sigil-select'",
+    "class_g = 'sigil-select-box'"
+];
 ```
 
 ## Exit codes
