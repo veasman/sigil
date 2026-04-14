@@ -50,32 +50,18 @@ This handles all dependencies automatically.
 
 ### Manual
 
-Install build dependencies:
+Install build and runtime dependencies:
 
 ```bash
-doas pacman -S base-devel pkgconf libx11 libxrandr libxrender libpng
+doas pacman -S base-devel pkgconf libx11 libxrandr libxrender libpng xclip
 ```
-
-Install runtime dependency for clipboard support:
-
-```bash
-doas pacman -S xclip
-```
-
-If `xclip` is missing, `--file` and `--stdout` still work.
 
 Build and install:
 
 ```bash
 make
-./install.sh
-```
-
-Or for a system-wide install:
-
-```bash
-make
-PREFIX=/usr/local ./install.sh
+doas make install              # installs to /usr/local
+doas make install PREFIX=/usr  # or system-wide under /usr
 ```
 
 ## Usage
