@@ -1,4 +1,4 @@
-pkgbase = sigil-git
+pkgbase = sigil-shot-git
 	pkgdesc = Lean X11 screenshot tool for Arch-family systems
 	pkgver = r0.0000000
 	pkgrel = 1
@@ -13,9 +13,9 @@ pkgbase = sigil-git
 	depends = libxrender
 	depends = libpng
 	depends = xclip
-	provides = sigil
 	conflicts = sigil
+	conflicts = sigil-git
 	source = git+https://github.com/veasman/sigil.git
 	sha256sums = SKIP
 
-pkgname = sigil-git
+pkgname = sigil-shot-git

@@ -1,4 +1,4 @@
-pkgname=sigil-git
+pkgname=sigil-shot-git
 pkgver=r0.0000000
 pkgrel=1
 pkgdesc="Lean X11 screenshot tool for Arch-family systems"
@@ -7,8 +7,7 @@ url="https://github.com/veasman/sigil"
 license=('MIT')
 depends=('libx11' 'libxrandr' 'libxrender' 'libpng' 'xclip')
 makedepends=('base-devel' 'git' 'pkgconf')
-provides=('sigil')
-conflicts=('sigil')
+conflicts=('sigil' 'sigil-git')
 source=('git+https://github.com/veasman/sigil.git')
 sha256sums=('SKIP')
 
